@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Boss Battle - Step 1</title>
+<title>Boss Battle - Step 2</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; }
   body { display: flex; align-items: center; justify-content: center; }
@@ -12,47 +12,112 @@
 </head>
 <body>
 <canvas id="game" width="640" height="480"></canvas>
+
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-// 전투 상자 (흰 테두리)
+
+// 전투 상자
 const box = { x: 220, y: 200, w: 200, h: 200, border: 5 };
 
 // 하트(플레이어)
-const heart = { x: 320, y: 300, size: 16, speed: 180 }; // speed: 초당 픽셀
+const heart = {
+  x: 320, y: 300, size: 16, speed: 180,
+  hitRadius: 4,          // 피격 판정은 눈에 보이는 크기보다 작게!
+  hp: 20, maxHp: 20,
+  invincible: 0          // 남은 무적 시간(초)
+};
 
-// 키 입력 상태
+// 탄막
+const bullets = [];
+let spawnTimer = 0;
+const SPAWN_INTERVAL = 0.35; // 탄 생성 간격(초)
+
+let gameOver = false;
+
+// 키 입력
 const keys = {};
 window.addEventListener("keydown", e => {
   keys[e.key] = true;
-  if (e.key.startsWith("Arrow")) e.preventDefault(); // 방향키로 페이지 스크롤 방지
+  if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault();
+  if (gameOver && (e.key === "Enter" || e.key === " ")) restart();
 });
 window.addEventListener("keyup", e => { keys[e.key] = false; });
 
+function restart() {
+  heart.x = 320; heart.y = 300;
+  heart.hp = heart.maxHp;
+  heart.invincible = 0;
+  bullets.length = 0;
+  spawnTimer = 0;
+  gameOver = false;
+}
+
+function spawnBullet() {
+  const r = 6;
+  const minX = box.x + box.border + r;
+  const maxX = box.x + box.w - box.border - r;
+  bullets.push({
+    x: minX + Math.random() * (maxX - minX),
+    y: box.y - r,                 // 상자 위쪽 바깥에서 시작
+    r: r,
+    vy: 120 + Math.random() * 60  // 떨어지는 속도(초당 픽셀)
+  });
+}
+
 function update(dt) {
+  if (gameOver) return;
+
+  // --- 하트 이동 ---
   let dx = 0, dy = 0;
   if (keys["ArrowLeft"])  dx -= 1;
   if (keys["ArrowRight"]) dx += 1;
   if (keys["ArrowUp"])    dy -= 1;
   if (keys["ArrowDown"])  dy += 1;
-
-  // 대각선 이동 시 속도가 빨라지지 않도록 정규화
   if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2; }
 
   heart.x += dx * heart.speed * dt;
   heart.y += dy * heart.speed * dt;
 
-  // 상자 안쪽에 가두기
   const half = heart.size / 2;
-  const left   = box.x + box.border + half;
-  const right  = box.x + box.w - box.border - half;
-  const top    = box.y + box.border + half;
-  const bottom = box.y + box.h - box.border - half;
-  heart.x = Math.max(left, Math.min(right, heart.x));
-  heart.y = Math.max(top, Math.min(bottom, heart.y));
+  heart.x = Math.max(box.x + box.border + half, Math.min(box.x + box.w - box.border - half, heart.x));
+  heart.y = Math.max(box.y + box.border + half, Math.min(box.y + box.h - box.border - half, heart.y));
+
+  // --- 무적 시간 감소 ---
+  if (heart.invincible > 0) heart.invincible -= dt;
+
+  // --- 탄 생성 ---
+  spawnTimer += dt;
+  if (spawnTimer >= SPAWN_INTERVAL) {
+    spawnTimer = 0;
+    spawnBullet();
+  }
+
+  // --- 탄 이동 + 충돌 판정 ---
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.y += b.vy * dt;
+
+    // 상자 아래로 나가면 제거
+    if (b.y - b.r > box.y + box.h) {
+      bullets.splice(i, 1);
+      continue;
+    }
+
+    // 원 vs 원 충돌 (두 중심 사이 거리 < 반지름 합)
+    const dist = Math.hypot(b.x - heart.x, b.y - heart.y);
+    if (dist < b.r + heart.hitRadius && heart.invincible <= 0) {
+      heart.hp -= 4;
+      heart.invincible = 1.0;     // 1초 무적
+      bullets.splice(i, 1);
+      if (heart.hp <= 0) {
+        heart.hp = 0;
+        gameOver = true;
+      }
+    }
+  }
 }
 
-// 하트 모양 그리기 (직접 그린 도형)
 function drawHeart(cx, cy, s) {
   const r = s / 4;
   ctx.fillStyle = "#ff0000";
@@ -65,6 +130,20 @@ function drawHeart(cx, cy, s) {
   ctx.fill();
 }
 
+function drawHpBar() {
+  const x = 220, y = 420, w = 120, h = 20;
+  ctx.fillStyle = "#fff";
+  ctx.font = "16px monospace";
+  ctx.textBaseline = "middle";
+  ctx.fillText("HP", x - 32, y + h / 2);
+  ctx.fillStyle = "#c00";                       // 빈 부분(빨강)
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "#ff0";                       // 남은 체력(노랑)
+  ctx.fillRect(x, y, w * (heart.hp / heart.maxHp), h);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(heart.hp + " / " + heart.maxHp, x + w + 12, y + h / 2);
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -75,14 +154,41 @@ function draw() {
   ctx.fillRect(box.x + box.border, box.y + box.border,
                box.w - box.border * 2, box.h - box.border * 2);
 
-  // 하트
-  drawHeart(heart.x, heart.y, heart.size);
+  // 탄막: 상자 안쪽에서만 보이도록 클리핑
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(box.x + box.border, box.y + box.border,
+           box.w - box.border * 2, box.h - box.border * 2);
+  ctx.clip();
+  ctx.fillStyle = "#fff";
+  for (const b of bullets) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 하트 (무적 중에는 깜빡임)
+  const blinkOff = heart.invincible > 0 && Math.floor(heart.invincible * 10) % 2 === 0;
+  if (!gameOver && !blinkOff) drawHeart(heart.x, heart.y, heart.size);
+
+  drawHpBar();
+
+  if (gameOver) {
+    ctx.fillStyle = "#fff";
+    ctx.font = "24px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", canvas.width / 2, 120);
+    ctx.font = "14px monospace";
+    ctx.fillText("Enter 또는 Space로 다시 시작", canvas.width / 2, 150);
+    ctx.textAlign = "start";
+  }
 }
 
 // 게임 루프
 let last = performance.now();
 function loop(now) {
-  const dt = Math.min((now - last) / 1000, 0.05); // 탭 전환 후 순간이동 방지
+  const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   update(dt);
   draw();
